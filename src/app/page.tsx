@@ -33,6 +33,14 @@ import {
 } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Progress } from '@/components/ui/progress'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { ChevronDown } from 'lucide-react'
+
 
 // API URL - replace with your actual backend URL
 const API_URL = 'http://localhost:5000/api'
@@ -52,7 +60,15 @@ interface Flow {
   FlowStartTime: string
   FlowLastSeen: string
 }
-
+interface FilterState {
+  Src: string | null
+  SrcPort: number | null
+  Dest: string | null
+  DestPort: number | null
+  Protocol: string | null
+  Classification: string | null
+  Risk: string | null
+}
 // API status interface
 interface ApiStatus {
   status: string
@@ -60,18 +76,21 @@ interface ApiStatus {
   active_flows: number
 }
 
-
 export default function Dashboard() {
+
+
+
+
+
   const [flows, setFlows] = useState<Flow[]>([])
-  const [loading, setLoading] = useState<boolean>(true)
+  const [initialLoad, setInitialLoad] = useState<boolean>(true)
   const [error, setError] = useState<string | null>(null)
   const [apiStatus, setApiStatus] = useState<ApiStatus | null>(null)
   const [isSniffing, setIsSniffing] = useState<boolean>(false)
   const router = useRouter()
 
-  // Fetch all flows
-  const fetchFlows = async () => {
-    setLoading(true)
+  // Fetch all flows (initial load)
+  const fetchInitialFlows = async () => {
     try {
       const response = await axios.get(`${API_URL}/flows`)
       setFlows(response.data.flows)
@@ -80,7 +99,37 @@ export default function Dashboard() {
       console.error('Error fetching flows:', err)
       setError('Failed to fetch network flows. Please check if the API server is running.')
     } finally {
-      setLoading(false)
+      setInitialLoad(false)
+    }
+  }
+
+  // Fetch new flows (for polling)
+  const fetchNewFlows = async () => {
+    try {
+      const response = await axios.get(`${API_URL}/flows`)
+      setFlows(prevFlows => {
+        // Create a map of existing flow IDs
+        const existingIds = new Set(prevFlows.map(flow => flow.FlowID))
+        // Filter out duplicates
+        const newFlows = response.data.flows.filter((flow: Flow) =>
+          !existingIds.has(flow.FlowID)
+        )
+        return newFlows.length > 0 ? [...prevFlows, ...newFlows] : prevFlows
+      })
+    } catch (err) {
+      console.error('Error fetching new flows:', err)
+      // Don't show error for polling to avoid UI disruption
+    }
+  }
+
+  // Manual refresh
+  const refreshFlows = async () => {
+    try {
+      const response = await axios.get(`${API_URL}/flows`)
+      setFlows(response.data.flows)
+    } catch (err) {
+      console.error('Error refreshing flows:', err)
+      setError('Failed to refresh flows. Please check the API server.')
     }
   }
 
@@ -152,11 +201,11 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchStatus()
-    fetchFlows()
+    fetchInitialFlows()
 
     // Set up polling for real-time updates
     const statusInterval = setInterval(fetchStatus, 5000)
-    const flowsInterval = setInterval(fetchFlows, 10000)
+    const flowsInterval = setInterval(fetchNewFlows, 10000)
 
     return () => {
       clearInterval(statusInterval)
@@ -164,6 +213,43 @@ export default function Dashboard() {
     }
   }, [])
 
+  //for filtering
+  const [filters, setFilters] = useState<FilterState>({
+    Src: null,
+    SrcPort: null,
+    Dest: null,
+    DestPort: null,
+    Protocol: null,
+    Classification: null,
+    Risk: null
+  })
+
+  // Add this function to get unique values for each column
+  const getUniqueValues = (key: keyof Flow) => {
+    const unique = new Set<string | number>()
+    flows.forEach(flow => {
+      unique.add(flow[key] as string | number)
+    })
+    return Array.from(unique).sort()
+  }
+
+  // Add this function to filter flows
+  const filteredFlows = flows.filter(flow => {
+    return (
+      (!filters.Src || flow.Src === filters.Src) &&
+      (!filters.SrcPort || flow.SrcPort === filters.SrcPort) &&
+      (!filters.Dest || flow.Dest === filters.Dest) &&
+      (!filters.DestPort || flow.DestPort === filters.DestPort) &&
+      (!filters.Protocol || flow.Protocol === filters.Protocol) &&
+      (!filters.Classification || flow.Classification === filters.Classification) &&
+      (!filters.Risk || flow.Risk === filters.Risk)
+    )
+  })
+
+  // Add this function to clear a specific filter
+  const clearFilter = (key: keyof FilterState) => {
+    setFilters(prev => ({ ...prev, [key]: null }))
+  }
   return (
     <div className="container mx-auto p-4">
       <h1 className="text-4xl font-bold mb-8">Network Traffic Analysis Dashboard</h1>
@@ -247,7 +333,7 @@ export default function Dashboard() {
           </CardContent>
           <CardFooter className="pt-2">
             <div className="flex space-x-2 w-full">
-              <Button onClick={fetchFlows} className="flex-1" variant="outline">
+              <Button onClick={refreshFlows} className="flex-1" variant="outline">
                 <RefreshCw className="mr-2 h-4 w-4" />
                 Refresh Data
               </Button>
@@ -278,7 +364,7 @@ export default function Dashboard() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {loading ? (
+          {initialLoad ? (
             <div className="space-y-4 py-4">
               <div className="text-center text-sm text-gray-500">Loading flow data...</div>
               <Progress value={45} className="w-full" />
@@ -293,18 +379,168 @@ export default function Dashboard() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-16">ID</TableHead>
-                    <TableHead>Source</TableHead>
-                    <TableHead>Src Port</TableHead>
-                    <TableHead>Destination</TableHead>
-                    <TableHead>Dest Port</TableHead>
-                    <TableHead>Protocol</TableHead>
+
+                    <TableHead>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger className="flex items-center">
+                          Source <ChevronDown className="ml-1 h-4 w-4" />
+                          {filters.Src && <span className="ml-1 text-xs">(filtered)</span>}
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent className="max-h-60 overflow-y-auto">
+                          <DropdownMenuItem onClick={() => clearFilter('Src')}>
+                            Clear Filter
+                          </DropdownMenuItem>
+                          {getUniqueValues('Src').map(value => (
+                            <DropdownMenuItem
+                              key={value as string}
+                              onClick={() => setFilters(prev => ({ ...prev, Src: value as string }))}
+                            >
+                              {value}
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableHead>
+
+                    <TableHead>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger className="flex items-center">
+                          Src Port <ChevronDown className="ml-1 h-4 w-4" />
+                          {filters.SrcPort && <span className="ml-1 text-xs">(filtered)</span>}
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent className="max-h-60 overflow-y-auto">
+                          <DropdownMenuItem onClick={() => clearFilter('SrcPort')}>
+                            Clear Filter
+                          </DropdownMenuItem>
+                          {getUniqueValues('SrcPort').map(value => (
+                            <DropdownMenuItem
+                              key={value as number}
+                              onClick={() => setFilters(prev => ({ ...prev, SrcPort: value as number }))}
+                            >
+                              {value}
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableHead>
+
+                    <TableHead>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger className="flex items-center">
+                          Destination <ChevronDown className="ml-1 h-4 w-4" />
+                          {filters.Dest && <span className="ml-1 text-xs">(filtered)</span>}
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent className="max-h-60 overflow-y-auto">
+                          <DropdownMenuItem onClick={() => clearFilter('Dest')}>
+                            Clear Filter
+                          </DropdownMenuItem>
+                          {getUniqueValues('Dest').map(value => (
+                            <DropdownMenuItem
+                              key={value as string}
+                              onClick={() => setFilters(prev => ({ ...prev, Dest: value as string }))}
+                            >
+                              {value}
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableHead>
+
+                    <TableHead>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger className="flex items-center">
+                          Dest Port <ChevronDown className="ml-1 h-4 w-4" />
+                          {filters.DestPort && <span className="ml-1 text-xs">(filtered)</span>}
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent className="max-h-60 overflow-y-auto">
+                          <DropdownMenuItem onClick={() => clearFilter('DestPort')}>
+                            Clear Filter
+                          </DropdownMenuItem>
+                          {getUniqueValues('DestPort').map(value => (
+                            <DropdownMenuItem
+                              key={value as number}
+                              onClick={() => setFilters(prev => ({ ...prev, DestPort: value as number }))}
+                            >
+                              {value}
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableHead>
+
+                    <TableHead>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger className="flex items-center">
+                          Protocol <ChevronDown className="ml-1 h-4 w-4" />
+                          {filters.Protocol && <span className="ml-1 text-xs">(filtered)</span>}
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent className="max-h-60 overflow-y-auto">
+                          <DropdownMenuItem onClick={() => clearFilter('Protocol')}>
+                            Clear Filter
+                          </DropdownMenuItem>
+                          {getUniqueValues('Protocol').map(value => (
+                            <DropdownMenuItem
+                              key={value as string}
+                              onClick={() => setFilters(prev => ({ ...prev, Protocol: value as string }))}
+                            >
+                              {value}
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableHead>
+
                     <TableHead className="w-32">Duration (ms)</TableHead>
-                    <TableHead>Classification</TableHead>
-                    <TableHead>Risk Level</TableHead>
+
+                    <TableHead>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger className="flex items-center">
+                          Classification <ChevronDown className="ml-1 h-4 w-4" />
+                          {filters.Classification && <span className="ml-1 text-xs">(filtered)</span>}
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent className="max-h-60 overflow-y-auto">
+                          <DropdownMenuItem onClick={() => clearFilter('Classification')}>
+                            Clear Filter
+                          </DropdownMenuItem>
+                          {getUniqueValues('Classification').map(value => (
+                            <DropdownMenuItem
+                              key={value as string}
+                              onClick={() => setFilters(prev => ({ ...prev, Classification: value as string }))}
+                            >
+                              {value}
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableHead>
+
+                    <TableHead>Probability</TableHead>
+
+                    <TableHead>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger className="flex items-center">
+                          Risk Level <ChevronDown className="ml-1 h-4 w-4" />
+                          {filters.Risk && <span className="ml-1 text-xs">(filtered)</span>}
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent className="max-h-60 overflow-y-auto">
+                          <DropdownMenuItem onClick={() => clearFilter('Risk')}>
+                            Clear Filter
+                          </DropdownMenuItem>
+                          {getUniqueValues('Risk').map(value => (
+                            <DropdownMenuItem
+                              key={value as string}
+                              onClick={() => setFilters(prev => ({ ...prev, Risk: value as string }))}
+                            >
+                              {value}
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {flows.map((flow) => (
+                  {filteredFlows.map((flow) => (
                     <TableRow key={flow.FlowID}>
                       <TableCell className="font-medium">{flow.FlowID}</TableCell>
                       <TableCell>{flow.Src}</TableCell>
@@ -314,7 +550,10 @@ export default function Dashboard() {
                       <TableCell>{flow.Protocol}</TableCell>
                       <TableCell>{Math.round(flow.FlowDuration)}</TableCell>
                       <TableCell>
-                        {flow.Probability}
+                        {flow.Classification}
+                      </TableCell>
+                      <TableCell>
+                        {Number(flow.Probability * 100).toFixed(2)}%
                       </TableCell>
                       <TableCell>
                         <Badge className={getRiskColor(flow.Risk)}>
