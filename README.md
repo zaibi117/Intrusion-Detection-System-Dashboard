@@ -32,7 +32,6 @@ The **Network Traffic Analysis Dashboard** is a real-time web application for mo
    ```bash
    npm install
    ```
-   ```
 
 3. **Run the application locally**
    ```bash
@@ -64,6 +63,7 @@ The **Network Traffic Analysis Dashboard** is a real-time web application for mo
 - Defines TypeScript interfaces for the flow data, API status, and filter state used throughout the application.
 
 ## API Endpoints
+The backend for this project is developed using **Flask** and can be found in a separate repository [here](https://github.com/zohaibsaeed117/Intrusion-Detection-System-Backend).
 
 - `GET /flows`: Fetches all network flows.
 - `GET /status`: Fetches the current status of the IDS.
